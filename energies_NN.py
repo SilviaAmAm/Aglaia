@@ -14,7 +14,7 @@ import seaborn as sns
 import pandas as pd
 import os
 
-class MLPRegFlow(BaseEstimator, ClassifierMixin):
+class Energies_NN(BaseEstimator, ClassifierMixin):
     """
     Neural-network with multiple hidden layers to do regression.
     This model optimises the squared error function using the Adam optimiser.
@@ -374,6 +374,66 @@ class MLPRegFlow(BaseEstimator, ClassifierMixin):
             return predictions
         else:
             raise Exception("The fit function has not been called yet, so the model has not been trained yet.")
+
+    def save_NN(self, dir):
+        """
+        This function saves a .meta, .index, .data_0000-0001 and a check point file, which can be used to save the
+        trained model.
+
+        :dir: absolute or relative path of directory where to save the files
+        """
+
+        if self.alreadyInitialised == False:
+            raise Exception("The fit function has not been called yet, so the model has not been trained yet.")
+
+        # Creating a new graph
+        model_graph = tf.Graph()
+
+        with model_graph.as_default():
+
+            X_test = tf.placeholder(tf.float32, [None, self.n_feat], name="descriptor")
+
+            weights = []
+            biases = []
+
+            for ii in range(len(self.all_weights)):
+                weights.append(tf.Variable(self.all_weights[ii]))
+                biases.append(tf.Variable(self.all_biases[ii]))
+
+            model = self.modelNN(X_test, weights, biases)
+
+            init = tf.global_variables_initializer()
+            # Object needed to save the model
+            all_saver = tf.train.Saver(save_relative_paths=True)
+
+            with tf.Session() as sess:
+                sess.run(init)
+                all_saver.save(sess, dir)
+
+    def load_NN(self, dir):
+        """
+        Function that loads a trained estimator.
+
+        :dir: directory where the .meta, .index, .data_0000-0001 and check point files have been saved.
+        """
+
+        # Inserting the weights into the model
+        with tf.Session() as sess:
+            # Loading a saved graph
+            file = dir + ".meta"
+            saver = tf.train.import_meta_graph(file)
+
+            # The model is loaded in the default graph
+            graph = tf.get_default_graph()
+
+            # Loading the graph of out_NN
+            self.out_NN = graph.get_tensor_by_name("output_node:0")
+            self.in_data = graph.get_tensor_by_name("Cartesian_coord:0")
+
+            saver.restore(sess, dir)
+            sess.run(tf.global_variables_initializer())
+
+        self.loadedModel = True
 
     def score(self, X, y, sample_weight=None):
         """
