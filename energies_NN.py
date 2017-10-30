@@ -61,8 +61,11 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
     """
 
-    def __init__(self, hidden_layer_sizes=(5,), alpha=0.0001, batch_size='auto', learning_rate_init=0.001,
-                 max_iter=80, hl1=0, hl2=0, hl3=0, tensorboard=False, print_step = 200):
+    def __init__(self, hidden_layer_sizes=(5,), alpha=0.0001, batch_size='auto', learning_rate_init=0.001, max_iter=80,
+                 hl1=0,
+                 # hl2=0,
+                 # hl3=0,
+                 tensorboard=False, print_step = 200):
 
         # Initialising the parameters
         self.alpha = alpha
@@ -70,16 +73,22 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         self.learning_rate_init = learning_rate_init
         self.max_iter = max_iter
 
+        # # To make this work with Osprey
+        # if hl1 == 0 and hl2 == 0 and hl3 == 0:
+        #     self.hidden_layer_sizes = hidden_layer_sizes
+        # else:
+        #     self.hidden_layer_sizes = (hl1, hl2, hl3)
+        #     if any(l == 0 for l in self.hidden_layer_sizes):
+        #         raise ValueError("You have a hidden layer with 0 neurons in it.")
+
         # To make this work with Osprey
-        if hl1 == 0 and hl2 == 0 and hl3 == 0:
+        if hl1 == 0 or hl1 == None:
             self.hidden_layer_sizes = hidden_layer_sizes
             if any(l == 0 for l in self.hidden_layer_sizes):
                 raise ValueError("You have a hidden layer with 0 neurons in it.")
-
         else:
-            self.hidden_layer_sizes = (hl1, hl2, hl3)
-            if any(l == 0 for l in self.hidden_layer_sizes):
-                raise ValueError("You have a hidden layer with 0 neurons in it.")
+            self.hidden_layer_sizes = (hl1,)
+
 
 
         # Initialising parameters needed for the Tensorflow part
@@ -810,7 +819,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
 if __name__ == "__main__":
 
-    estimator = MLPRegFlow(hidden_layer_sizes=(5, 5, 5), learning_rate_init=0.01, max_iter=5000, alpha=0)
+    estimator = Energies_NN(hidden_layer_sizes=(5, 5, 5), learning_rate_init=0.01, max_iter=5000, alpha=0)
     x = np.arange(-2.0, 2.0, 0.05)
     X = np.reshape(x, (len(x), 1))
     y = np.reshape(X ** 3, (len(x),))
