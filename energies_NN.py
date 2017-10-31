@@ -151,7 +151,11 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
             model = self.modelNN(X_train, weights, biases)
 
         with tf.name_scope("cost_func"):
-            cost = self.costReg(model, Y_train, weights, self.alpha)
+            err = tf.square(tf.subtract(Y_train, model))
+            cost = tf.reduce_mean(err, name="unreg_cost")  # scalar
+            reg_term = self.__reg_term(weights)
+
+            cost_reg = cost + reg_term * self.alpha
 
         if self.tensorboard:
             cost_summary = tf.summary.scalar('cost', cost)
@@ -258,46 +262,22 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         return weights, biases
 
-    def costReg(self, qm_data, nn_data, weights, regu):
+    def __reg_term(self, weights):
         """
-        This function calculates the squared error cost function with L2 regularisation.
+                This function calculates the regularisation term to the cost function.
 
-        :nn_data: tensor
+                :weights: list of tensorflow tensors
+                :return: tensorflow scalar
+                """
 
-            This tensor contains the neural network model.
+        reg_term = tf.zeros([], name="regu_term")
 
-        :qm_data: TensorFlow Place holder
-
-            This tensor contains the y part of the data once the graph is initialised.
-
-        :weights: array of TensorFlow variables of shape (len(hidden_layer_sizes+1), )
-
-            It contains the weights for each hidden layer and the output layer.
-
-        :regu: float
-
-            The parameter that tunes the amount of regularisation.
-
-        :return: tensor
-        """
-        err = tf.square(tf.subtract(qm_data, nn_data))
-        cost = tf.reduce_mean(err, name="unreg_cost") # scalar
-
-        # Calculating the regularisation term
-        reg_term = tf.Variable(tf.zeros([]), name="regu_term")
         for i in range(len(weights)):
             reg_term = reg_term + tf.reduce_sum(tf.square(weights[i]))
 
+        return reg_term
 
-        # Multiplying the regularisation term by the regularisation parameter
-        reg_l2 = tf.scalar_mul(regu, reg_term)
-
-        # Regularised cost
-        cost_reg = tf.add(cost, reg_l2, name="reg_cost")
-
-        return cost_reg
-
-    def plotLearningCurve(self):
+    def plot_cost(self):
         """
         This function plots the cost versus the number of iterations for the training set and the test set in the
         same plot. The cost on the train set is calculated every 50 iterations.
@@ -562,7 +542,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         # sns.plt.savefig("ErrorDist.png", transparent=True, dpi=800)
         plt.show()
 
-    def correlationPlot(self, X, y, ylim=(1.90, 1.78), xlim=(1.90, 1.78)):
+    def correlationPlot(self, X, y):
         """
         This function plots a correlation plot of the values that are in the data set and the NN predictions. It expects
         the target values to be in Hartrees.
@@ -574,14 +554,6 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         :y: array of shape (n_samples,)
 
             This contains the target values for each sample in the X matrix.
-
-        :ylim: tuple of shape (2,) containing doubles
-
-            These are the limits of the y values for the plot.
-
-        :xlim: tuple of shape (2,) containing doubles
-
-            These are the limits of the x values for the plot.
         """
         y_pred = self.predict(X)
         df = pd.DataFrame()
@@ -589,8 +561,6 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         df['NN predicted energies (Ha)'] = y_pred
         lm = sns.lmplot('High level calculated energies (Ha)', 'NN predicted energies (Ha)', data=df,
                         scatter_kws={"s": 20, "alpha": 0.6}, line_kws={"alpha": 0.5})
-        lm.set(ylim=ylim)
-        lm.set(xlim=xlim)
         plt.show()
 
     def plotWeights(self):
@@ -600,8 +570,8 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         w1_square_tot = []
 
-        for i in range(self.hidden_layer_sizes[0]):
-            w1_square = self.reshape_triang(self.w1[i], 7)
+        for node in range(self.hidden_layer_sizes[0]):
+            w1_square = self.reshape_triang(self.all_weights[0][node,:], 7)
             w1_square_tot.append(w1_square)
 
         n = int(np.ceil(np.sqrt(self.hidden_layer_sizes)))
@@ -618,12 +588,12 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
             sns.heatmap(df,
                         ax=ax,
                         cbar=i == 0,
-                        vmin=-0.2, vmax=0.2,
+                        vmin=-20, vmax=20,
                         cbar_ax=None if i else cbar_ax, cmap="PiYG")
 
         fig.tight_layout(rect=[0, 0, 0.9, 1])
-        # sns.plt.savefig("weights_l1.png", transparent=False, dpi=600)
-        # sns.plt.show()
+        # fig.savefig("weights_l1.png", transparent=False, dpi=600)
+        plt.show()
 
     def reshape_triang(self, X, dim):
         """
@@ -653,7 +623,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         return x_square
 
-    def __vis_input(self, initial_guess):
+    def optimise_input(self, initial_guess, alpha_l1, alpha_l2):
         """
         This function does gradient ascent to generate an input that gives the highest activation for each neuron of
         the first hidden layer.
@@ -669,22 +639,27 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         """
 
-        self.isVisReady = True
         initial_guess = np.reshape(initial_guess, newshape=(1, initial_guess.shape[0]))
         input_x = tf.Variable(initial_guess, dtype=tf.float32)
         activations = []
-        iterations = 7000
-        lambda_reg = 0.0002
+        iterations = 5000
+        # alpha_l1 = 0.00002
+        # alpha_l2 = 0.00002
         self.x_square_tot = []
+        self.final_x_tot = []
+
 
         for node in range(self.hidden_layer_sizes[0]):
 
             # Calculating the activation of the first layer
-            w1_node = tf.constant(self.w1[node], shape=(1,self.n_feat))
-            b1_node = tf.constant(self.b1[node])
-            z1 = tf.add(tf.matmul(tf.abs(input_x), tf.transpose(w1_node)), b1_node)
+            clip_op = tf.clip_by_value(input_x, 0, np.infty)
+            w1_node = tf.constant(self.all_weights[0][node,:], shape=(1,self.n_feat))
+            b1_node = tf.constant(self.all_biases[0][node])
+            z1 = tf.add(tf.matmul(clip_op, tf.transpose(w1_node)), b1_node)
             a1 = tf.nn.sigmoid(z1)
-            a1_reg = a1 - lambda_reg * tf.tensordot(input_x, tf.transpose(input_x), axes=1)
+            l2_reg = alpha_l2 * tf.tensordot(input_x, tf.transpose(input_x), axes=1) * 0.5
+            l1_reg = alpha_l1 * tf.reduce_sum(tf.abs(input_x))
+            a1_reg = a1 -l2_reg -l1_reg
 
             # Function to maximise a1
             optimiser = tf.train.AdamOptimizer(learning_rate=0.01).minimize(-a1_reg)
@@ -702,16 +677,20 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
                 temp_a1 = sess.run(a1)
                 activations.append(temp_a1)     # Calculating the activation for checking later if a node has converged
-                final_x = sess.run(input_x)     # Storing the best input
+                final_x = sess.run(clip_op)     # Storing the optimised input
+
 
             x_square = self.reshape_triang(final_x[0,:], 7)
+            self.final_x_tot.append(final_x[0])
             self.x_square_tot.append(x_square)
         print("The activations at the end of the optimisations are:")
-        # print(activations)
+        print(activations)
+
+        self.isVisReady = True
 
         return self.x_square_tot
 
-    def vis_input_matrix(self, initial_guess, write_plot=False):
+    def vis_input_matrix(self, initial_guess, alpha_l1, alpha_l2, write_plot=False):
         """
         This function calculates the inputs that would give the highest activations of the neurons in the first hidden
         layer of the neural network. It then plots them as a heat map.
@@ -719,17 +698,21 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         :initial_guess: array of shape (n_features,)
 
             A coulomb matrix to use as the initial guess to the gradient ascent in the hope that the closest local
-            maximum will be found.
+            maximum will be found. It is the upper triangular part of the matrix that is input (and flattened).
 
         :write_plot: boolean, default False
 
             If this is true, the plot is written to a png file.
         """
 
+        # Making a nxn matrix as the initial guess
         if self.isVisReady == False:
-            self.x_square_tot = self.__vis_input(initial_guess)
+            self.x_square_tot = self.optimise_input(initial_guess, alpha_l1, alpha_l2)
 
-        n = int(np.ceil(np.sqrt(self.hidden_layer_sizes)))
+        max_val = np.amax(self.x_square_tot)
+        min_val = np.amin(self.x_square_tot)
+
+        n = int(np.ceil(np.sqrt(self.hidden_layer_sizes[0])))
         additional = n ** 2 - self.hidden_layer_sizes[0]
 
         fig, axn = plt.subplots(n, n, sharex=True, sharey=True)
@@ -740,8 +723,8 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         for i, ax in enumerate(axn.flat):
             df = pd.DataFrame(self.x_square_tot[counter])
             ax.set(xticks=[], yticks=[])
-            sns.heatmap(df, ax=ax, cbar=i == 0, cmap='RdYlGn',
-                        vmax=8, vmin=-8,
+            sns.heatmap(df, ax=ax, cbar=i == 0, cmap='YlGn',
+                        vmax=max_val, vmin=min_val,
                         cbar_ax=None if i else cbar_ax)
             counter = counter + 1
             if counter >= self.hidden_layer_sizes[0]:
@@ -749,10 +732,10 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         fig.tight_layout(rect=[0, 0, 0.9, 1])
         if write_plot==True:
-            sns.plt.savefig("high_a1_input.png", transparent=False, dpi=600)
-        sns.plt.show()
+            fig.savefig("high_a1_input.png", transparent=False, dpi=600)
+        plt.show()
 
-    def vis_input_network(self, initial_guess, write_plot=False):
+    def vis_input_network(self, initial_guess, alpha_l1, alpha_l2, write_plot=False):
         """
         This function calculates the inputs that would give the highest activations of the neurons in the first hidden
         layer of the neural network. It then plots them as a netwrok graph.
@@ -769,49 +752,53 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         import networkx as nx
 
         if self.isVisReady == False:
-            self.x_square_tot = self.__vis_input(initial_guess)
+            self.x_square_tot = self.optimise_input(initial_guess, alpha_l1, alpha_l2)
+
+        max_val = np.amax(self.x_square_tot)
+        min_val = np.amin(self.x_square_tot)
 
         n = int(np.ceil(np.sqrt(self.hidden_layer_sizes)))
 
-        fig = plt.figure(figsize=(10, 8))
+        fig = plt.figure(figsize=(18, 15))
         for i in range(n**2):
             if i >= self.hidden_layer_sizes[0]:
                 break
             fig.add_subplot(n,n,1+i)
             A = np.matrix(self.x_square_tot[i])
             graph2 = nx.from_numpy_matrix(A, parallel_edges=False)
-            # nodes and their label
-            # pos = {0: np.array([0.46887886, 0.06939788]), 1: np.array([0, 0.26694294]),
-            #        2: np.array([0.3, 0.56225267]),
-            #        3: np.array([0.13972517, 0.]), 4: np.array([0.6, 0.9]), 5: np.array([0.27685853, 0.31976436]),
-            #        6: np.array([0.72, 0.9])}
+
             pos = {}
             for i in range(7):
                 x_point = 0.6*np.cos((i+1)*2*np.pi/7)
                 y_point = 0.6*np.sin((i+1)*2*np.pi/7)
                 pos[i] = np.array([x_point, y_point])
             labels = {}
-            labels[0] = 'H'
+            labels[0] = 'C'
             labels[1] = 'H'
             labels[2] = 'H'
             labels[3] = 'H'
-            labels[4] = 'C'
+            labels[4] = 'H'
             labels[5] = 'C'
             labels[6] = 'N'
-            node_size = np.zeros(7)
-            for i in range(7):
-                node_size[i] =  abs(graph2[i][i]['weight'])*10
-            nx.draw_networkx_nodes(graph2, pos, node_size=node_size)
-            nx.draw_networkx_labels(graph2, pos, labels=labels, font_size=15, font_family='sans-serif', font_color='blue')
-            # edges
+
+            colors = ["lightseagreen", "paleturquoise", "paleturquoise", "paleturquoise", "paleturquoise", "lightseagreen", "orchid"]
+
+
+            # edges widths
             edgewidth = [d['weight'] for (u, v, d) in graph2.edges(data=True)]
-            nx.draw_networkx_edges(graph2, pos, width=edgewidth)
+
             plt.axis('off')
+            nx.draw_circular(graph2,
+                             width=edgewidth,
+                             with_labels=True, labels=labels, node_color=colors,
+                             edge_color=edgewidth, edge_cmap=plt.cm.Blues, edge_vmin=min_val, edge_vmax=max_val
+                             )
 
         if write_plot==True:
             plt.savefig("high_a1_network.png")  # save as png
 
         plt.show()  # display
+
 
 
 
@@ -842,5 +829,7 @@ if __name__ == "__main__":
     ax3.set_ylabel('prediction y')
     plt.show()
 
+    # Cost plot
+    estimator.plot_cost()
     # estimator.errorDistribution(X, y)
 
