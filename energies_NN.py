@@ -242,22 +242,23 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         weights = []
         biases = []
+        seed = 1
 
         # Weights from input layer to first hidden layer
-        weights.append(tf.Variable(tf.truncated_normal([self.hidden_layer_sizes[0], self.n_feat], stddev=0.01),
+        weights.append(tf.Variable(tf.truncated_normal([self.hidden_layer_sizes[0], self.n_feat], stddev=0.01, seed=seed),
                                    name='weight_in'))
         biases.append(tf.Variable(tf.zeros([self.hidden_layer_sizes[0]]), name='bias_in'))
 
         # Weights from one hidden layer to the next
         for ii in range(len(self.hidden_layer_sizes) - 1):
             weights.append(tf.Variable(
-                tf.truncated_normal([self.hidden_layer_sizes[ii + 1], self.hidden_layer_sizes[ii]], stddev=0.01),
+                tf.truncated_normal([self.hidden_layer_sizes[ii + 1], self.hidden_layer_sizes[ii]], stddev=0.01, seed=seed),
                 name='weight_hidden'))
             biases.append(tf.Variable(tf.zeros([self.hidden_layer_sizes[ii + 1]]), name='bias_hidden'))
 
         # Weights from lat hidden layer to output layer
         weights.append(
-            tf.Variable(tf.truncated_normal([1, self.hidden_layer_sizes[-1]], stddev=0.01), name='weight_out'))
+            tf.Variable(tf.truncated_normal([1, self.hidden_layer_sizes[-1]], stddev=0.01, seed=seed), name='weight_out'))
         biases.append(tf.Variable(tf.zeros([1]), name='bias_out'))
 
         return weights, biases
@@ -623,7 +624,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         return x_square
 
-    def optimise_input(self, initial_guess, alpha_l1, alpha_l2):
+    def optimise_input(self, initial_guess, alpha_l1, alpha_l2, clipping):
         """
         This function does gradient ascent to generate an input that gives the highest activation for each neuron of
         the first hidden layer.
@@ -643,19 +644,24 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         input_x = tf.Variable(initial_guess, dtype=tf.float32)
         activations = []
         iterations = 5000
-        # alpha_l1 = 0.00002
-        # alpha_l2 = 0.00002
         self.x_square_tot = []
         self.final_x_tot = []
-
 
         for node in range(self.hidden_layer_sizes[0]):
 
             # Calculating the activation of the first layer
-            clip_op = tf.clip_by_value(input_x, 0, np.infty)
+            clip_input = tf.clip_by_value(input_x, 0, np.infty)
+
+            # Clipping of features with small values
+            thresh_reg = tf.norm(clip_input) * clipping  # This defines the value below which features will be clipped
+            masked = tf.greater(clip_input, thresh_reg)
+            zeros = tf.zeros_like(clip_input)
+            clip_input = tf.where(masked, clip_input, zeros)
+
+            # Calculating the activation
             w1_node = tf.constant(self.all_weights[0][node,:], shape=(1,self.n_feat))
             b1_node = tf.constant(self.all_biases[0][node])
-            z1 = tf.add(tf.matmul(clip_op, tf.transpose(w1_node)), b1_node)
+            z1 = tf.add(tf.matmul(clip_input, tf.transpose(w1_node)), b1_node)
             a1 = tf.nn.sigmoid(z1)
             l2_reg = alpha_l2 * tf.tensordot(input_x, tf.transpose(input_x), axes=1) * 0.5
             l1_reg = alpha_l1 * tf.reduce_sum(tf.abs(input_x))
@@ -677,7 +683,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
                 temp_a1 = sess.run(a1)
                 activations.append(temp_a1)     # Calculating the activation for checking later if a node has converged
-                final_x = sess.run(clip_op)     # Storing the optimised input
+                final_x = sess.run(clip_input)     # Storing the optimised input
 
 
             x_square = self.reshape_triang(final_x[0,:], 7)
@@ -690,7 +696,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         return self.x_square_tot
 
-    def vis_input_matrix(self, initial_guess, alpha_l1, alpha_l2, write_plot=False):
+    def vis_input_matrix(self, initial_guess, alpha_l1, alpha_l2, clipping, write_plot=False):
         """
         This function calculates the inputs that would give the highest activations of the neurons in the first hidden
         layer of the neural network. It then plots them as a heat map.
@@ -707,7 +713,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         # Making a nxn matrix as the initial guess
         if self.isVisReady == False:
-            self.x_square_tot = self.optimise_input(initial_guess, alpha_l1, alpha_l2)
+            self.x_square_tot = self.optimise_input(initial_guess, alpha_l1, alpha_l2, clipping)
 
         max_val = np.amax(self.x_square_tot)
         min_val = np.amin(self.x_square_tot)
@@ -735,7 +741,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
             fig.savefig("high_a1_input.png", transparent=False, dpi=600)
         plt.show()
 
-    def vis_input_network(self, initial_guess, alpha_l1, alpha_l2, write_plot=False):
+    def vis_input_network(self, initial_guess, alpha_l1, alpha_l2, clipping, write_plot=False):
         """
         This function calculates the inputs that would give the highest activations of the neurons in the first hidden
         layer of the neural network. It then plots them as a netwrok graph.
@@ -752,10 +758,13 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         import networkx as nx
 
         if self.isVisReady == False:
-            self.x_square_tot = self.optimise_input(initial_guess, alpha_l1, alpha_l2)
+            self.x_square_tot = self.optimise_input(initial_guess, alpha_l1, alpha_l2, clipping)
 
-        max_val = np.amax(self.x_square_tot)
-        min_val = np.amin(self.x_square_tot)
+        for i in range(len(self.x_square_tot)):
+            self.x_square_tot[i] = self.x_square_tot[i] * self.all_weights[1][0][i]
+
+        # max_val = np.amax(self.x_square_tot)
+        # min_val = np.amin(self.x_square_tot)
 
         n = int(np.ceil(np.sqrt(self.hidden_layer_sizes)))
 
@@ -791,7 +800,9 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
             nx.draw_circular(graph2,
                              width=edgewidth,
                              with_labels=True, labels=labels, node_color=colors,
-                             edge_color=edgewidth, edge_cmap=plt.cm.Blues, edge_vmin=min_val, edge_vmax=max_val
+                             edge_color=edgewidth, edge_cmap=plt.cm.Blues,
+                             # edge_vmin=min_val,
+                             # edge_vmax=max_val
                              )
 
         if write_plot==True:
