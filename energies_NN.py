@@ -61,7 +61,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
     """
 
-    def __init__(self, hidden_layer_sizes=(5,), alpha=0.0001, batch_size='auto', learning_rate_init=0.001, max_iter=80,
+    def __init__(self, hidden_layer_sizes=(5,), alpha=0.0001, alpha_l1=0.0, batch_size='auto', learning_rate_init=0.001, max_iter=80,
                  hl1=0,
                  # hl2=0,
                  # hl3=0,
@@ -69,6 +69,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         # Initialising the parameters
         self.alpha = alpha
+        self.alpha_l1 = alpha_l1
         self.batch_size = batch_size
         self.learning_rate_init = learning_rate_init
         self.max_iter = max_iter
@@ -153,14 +154,15 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         with tf.name_scope("cost_func"):
             err = tf.square(tf.subtract(Y_train, model))
             cost = tf.reduce_mean(err, name="unreg_cost")  # scalar
-            reg_term = self.__reg_term(weights)
+            reg_term_l2 = self.__reg_term(weights)
+            reg_term_l1 = self.__reg_term_l1(weights)
 
-            cost_reg = cost + reg_term * self.alpha
+            cost_reg = cost + reg_term_l2 * self.alpha + reg_term_l1 * self.alpha_l1
 
         if self.tensorboard:
             cost_summary = tf.summary.scalar('cost', cost)
 
-        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate_init).minimize(cost)
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate_init).minimize(cost_reg)
 
         # Initialisation of the variables
         init = tf.global_variables_initializer()
@@ -278,6 +280,21 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         return reg_term
 
+    def __reg_term_l1(self, weights):
+        """
+                This function calculates the L1 regularisation term to the cost function.
+
+                :weights: list of tensorflow tensors
+                :return: tensorflow scalar
+                """
+
+        reg_term = tf.zeros([], name="regu_term")
+
+        for i in range(len(weights)):
+            reg_term = reg_term + tf.reduce_sum(tf.abs(weights[i]))
+
+        return reg_term
+
     def plot_cost(self):
         """
         This function plots the cost versus the number of iterations for the training set and the test set in the
@@ -290,7 +307,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         sns.set()
         lm = sns.lmplot('Iterations', 'Cost', data=df, scatter_kws={"s": 20, "alpha": 0.6}, line_kws={"alpha": 0.5},
                         fit_reg=False)
-        # lm.set(yscale="log")
+        lm.set(yscale="log")
         plt.show()
 
     def checkBatchSize(self):
@@ -564,7 +581,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
                         scatter_kws={"s": 20, "alpha": 0.6}, line_kws={"alpha": 0.5})
         plt.show()
 
-    def plotWeights(self):
+    def plotWeights_diag(self, plot_fig=False):
         """
         This function plots the weights of the first layer of the neural network as a heat map.
         """
@@ -572,7 +589,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         w1_square_tot = []
 
         for node in range(self.hidden_layer_sizes[0]):
-            w1_square = self.reshape_triang(self.all_weights[0][node,:], 7)
+            w1_square = self.reshape_triang_diag(self.all_weights[0][node, :], 7)
             w1_square_tot.append(w1_square)
 
         n = int(np.ceil(np.sqrt(self.hidden_layer_sizes)))
@@ -593,10 +610,47 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
                         cbar_ax=None if i else cbar_ax, cmap="PiYG")
 
         fig.tight_layout(rect=[0, 0, 0.9, 1])
-        # fig.savefig("weights_l1.png", transparent=False, dpi=600)
+        if plot_fig:
+            name = "weights.png"
+            fig.savefig(name, transparent=False, dpi=100)
         plt.show()
 
-    def reshape_triang(self, X, dim):
+    def plotWeights_no_diag(self, plot_fig=False):
+        """
+        This function plots the weights of the first layer of the neural network as a heat map.
+        """
+
+        w1_square_tot = []
+        sns.set()
+
+        for node in range(self.hidden_layer_sizes[0]):
+            w1_square = self.reshape_triang_no_diag(self.all_weights[0][node, :], 7)
+            w1_square_tot.append(w1_square)
+
+        n = int(np.ceil(np.sqrt(self.hidden_layer_sizes)))
+        additional = n**2 - self.hidden_layer_sizes[0]
+
+        fig, axn = plt.subplots(n, n, sharex=True, sharey=True)
+        fig.set_size_inches(11.7, 8.27)
+        cbar_ax = fig.add_axes([.91, .3, .03, .4])
+
+        for i, ax in enumerate(axn.flat):
+            if i >= self.hidden_layer_sizes[0]:
+                break
+            df = pd.DataFrame(w1_square_tot[i])
+            sns.heatmap(df,
+                        ax=ax,
+                        cbar=i == 0,
+                        vmin=-60, vmax=60,
+                        cbar_ax=None if i else cbar_ax, cmap="PiYG")
+
+        fig.tight_layout(rect=[0, 0, 0.9, 1])
+        if plot_fig:
+            name = "weights_" + str(self.alpha_l1) + ".png"
+            fig.savefig(name, transparent=False, dpi=100)
+        # plt.show()
+
+    def reshape_triang_diag(self, X, dim):
         """
         This function reshapes a single flattened triangular matrix back to a square diagonal matrix.
 
@@ -624,7 +678,35 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         return x_square
 
-    def optimise_input(self, initial_guess, alpha_l1, alpha_l2, clipping):
+    def reshape_triang_no_diag(self, X, dim):
+        """
+        This function reshapes a single flattened triangular matrix back to a square diagonal matrix.
+
+        :X: array of shape (n_atoms*(n_atoms-1)/2, )
+
+            This contains a sample of the Coulomb matrix trimmed down so that it contains only the a triangular matrix.
+
+        :dim: int
+
+            The triangular matrix X will be reshaped to a matrix that has size dim by dim.
+
+
+        :return: array of shape (n_atoms, n_atoms)
+
+            This contains the square diagonal matrix.
+        """
+
+        x_square = np.zeros((dim, dim))
+        counter = 0
+        for i in range(dim):
+            for j in range(i+1, dim):
+                x_square[i][j] = X[counter]
+                x_square[j][i] = X[counter]
+                counter = counter + 1
+
+        return x_square
+
+    def optimise_input_diag(self, initial_guess, alpha_l1, alpha_l2):
         """
         This function does gradient ascent to generate an input that gives the highest activation for each neuron of
         the first hidden layer.
@@ -652,19 +734,13 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
             # Calculating the activation of the first layer
             clip_input = tf.clip_by_value(input_x, 0, np.infty)
 
-            # Clipping of features with small values
-            thresh_reg = tf.norm(clip_input) * clipping  # This defines the value below which features will be clipped
-            masked = tf.greater(clip_input, thresh_reg)
-            zeros = tf.zeros_like(clip_input)
-            clip_input = tf.where(masked, clip_input, zeros)
-
             # Calculating the activation
             w1_node = tf.constant(self.all_weights[0][node,:], shape=(1,self.n_feat))
             b1_node = tf.constant(self.all_biases[0][node])
             z1 = tf.add(tf.matmul(clip_input, tf.transpose(w1_node)), b1_node)
             a1 = tf.nn.sigmoid(z1)
-            l2_reg = alpha_l2 * tf.tensordot(input_x, tf.transpose(input_x), axes=1) * 0.5
-            l1_reg = alpha_l1 * tf.reduce_sum(tf.abs(input_x))
+            l2_reg = alpha_l2 * tf.tensordot(clip_input, tf.transpose(clip_input), axes=1) * 0.5
+            l1_reg = alpha_l1 * tf.reduce_sum(tf.abs(clip_input))
             a1_reg = a1 -l2_reg -l1_reg
 
             # Function to maximise a1
@@ -685,8 +761,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
                 activations.append(temp_a1)     # Calculating the activation for checking later if a node has converged
                 final_x = sess.run(clip_input)     # Storing the optimised input
 
-
-            x_square = self.reshape_triang(final_x[0,:], 7)
+            x_square = self.reshape_triang_diag(final_x[0, :], 7)
             self.final_x_tot.append(final_x[0])
             self.x_square_tot.append(x_square)
         print("The activations at the end of the optimisations are:")
@@ -696,7 +771,98 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         return self.x_square_tot
 
-    def vis_input_matrix(self, initial_guess, alpha_l1, alpha_l2, clipping, write_plot=False):
+    def optimise_input_no_diag(self, initial_guess, alpha_l1, alpha_l2, X_mean, iterations=8000, lr=0.001):
+        """
+        This function does gradient ascent to generate an input that gives the highest activation for each neuron of
+        the first hidden layer.
+
+        :initial_guess: array of shape (n_features,)
+
+            A coulomb matrix to use as the initial guess to the gradient ascent in the hope that the closest local
+            maximum will be found.
+
+        :return: list of arrays of shape (num_atoms, num_atoms)
+
+            each numpy array is the input for a particular neuron that gives the highest activation.
+
+        """
+
+        initial_guess_col = np.reshape(initial_guess, newshape=(1, initial_guess.shape[0]))
+
+        input_x = tf.Variable(initial_guess_col, dtype=tf.float32)
+        clip_input = tf.clip_by_value(input_x, 0, np.infty)
+
+        # Getting all the weights in the model
+        weights = []
+        biases = []
+
+        for ii in range(len(self.all_weights)):
+            weights.append(tf.constant(self.all_weights[ii]))
+            biases.append(tf.constant(self.all_biases[ii]))
+
+        # Calculating all the activations of the nodes
+        z = tf.add(tf.matmul(clip_input, tf.transpose(weights[0])), biases[0])
+        all_act = tf.nn.sigmoid(z)
+
+        feat_mean = tf.constant(X_mean, dtype=tf.float32)
+        constant = tf.constant(1, dtype=tf.float32)
+
+        activations = []
+        self.x_square_tot = []
+        self.final_x_tot = []
+        counter = 0
+
+        for node in range(self.hidden_layer_sizes[0]):
+
+            # Calculating the activation of the neuron under study
+            w1_node = tf.constant(self.all_weights[0][node,:], shape=(1, initial_guess.shape[0]))
+            b1_node = tf.constant(self.all_biases[0][node])
+            z1 = tf.add(tf.matmul(clip_input, tf.transpose(w1_node)), b1_node)
+            a1 = tf.nn.sigmoid(z1)
+
+            # Calculating the sum of the other activations
+            sum_a = tf.reduce_sum(all_act)
+
+            l2_reg = alpha_l2 * tf.tensordot(clip_input, tf.transpose(clip_input), axes=1) * 0.5
+            if len(alpha_l1) == 1:
+                l1_reg = alpha_l1[0] * tf.reduce_sum(tf.abs(clip_input - feat_mean))
+            else:
+                l1_reg = alpha_l1[counter] * tf.reduce_sum(tf.abs(clip_input - feat_mean))
+            den = tf.add(sum_a, constant)
+            a1_reg = tf.divide(a1, den) - l2_reg - l1_reg
+            # a1_reg = a1 - l2_reg - l1_reg
+
+            # Function to maximise a1
+            optimiser = tf.train.AdamOptimizer(learning_rate=lr).minimize(-a1_reg)
+
+            # Initialising the model
+            init = tf.global_variables_initializer()
+
+            # Running the graph
+            with tf.Session() as sess:
+                sess.run(init)
+
+                sess.run(input_x)
+                for i in range(iterations):
+                    sess.run(optimiser)
+
+                temp_a1 = sess.run(a1)
+                activations.append(temp_a1)     # Calculating the activation for checking later if a node has converged
+                final_x = sess.run(clip_input - feat_mean)     # Storing the optimised input
+
+            x_square = self.reshape_triang_no_diag(final_x[0, :], 7)
+            self.final_x_tot.append(final_x[0])
+            self.x_square_tot.append(x_square)
+            counter += 1
+
+        print("The activations at the end of the optimisations are:")
+        print(activations)
+
+        self.isVisReady = True
+
+        return self.x_square_tot
+
+    def vis_input_matrix_diag(self, initial_guess, alpha_l1, alpha_l2, write_plot=False):
         """
         This function calculates the inputs that would give the highest activations of the neurons in the first hidden
         layer of the neural network. It then plots them as a heat map.
@@ -713,7 +879,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
 
         # Making a nxn matrix as the initial guess
         if self.isVisReady == False:
-            self.x_square_tot = self.optimise_input(initial_guess, alpha_l1, alpha_l2, clipping)
+            self.x_square_tot = self.optimise_input_diag(initial_guess, alpha_l1, alpha_l2)
 
         max_val = np.amax(self.x_square_tot)
         min_val = np.amin(self.x_square_tot)
@@ -741,7 +907,52 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
             fig.savefig("high_a1_input.png", transparent=False, dpi=600)
         plt.show()
 
-    def vis_input_network(self, initial_guess, alpha_l1, alpha_l2, clipping, write_plot=False):
+    def vis_input_matrix_no_diag(self, initial_guess, alpha_l1, alpha_l2, write_plot=False):
+        """
+        This function calculates the inputs that would give the highest activations of the neurons in the first hidden
+        layer of the neural network. It then plots them as a heat map.
+
+        :initial_guess: array of shape (n_features,)
+
+            A coulomb matrix to use as the initial guess to the gradient ascent in the hope that the closest local
+            maximum will be found. It is the upper triangular part of the matrix that is input (and flattened).
+
+        :write_plot: boolean, default False
+
+            If this is true, the plot is written to a png file.
+        """
+
+        # Making a nxn matrix as the initial guess
+        if self.isVisReady == False:
+            self.x_square_tot = self.optimise_input_no_diag(initial_guess, alpha_l1, alpha_l2)
+
+        max_val = np.amax(self.x_square_tot)
+        min_val = np.amin(self.x_square_tot)
+
+        n = int(np.ceil(np.sqrt(self.hidden_layer_sizes[0])))
+        additional = n ** 2 - self.hidden_layer_sizes[0]
+
+        fig, axn = plt.subplots(n, n, sharex=True, sharey=True)
+        fig.set_size_inches(11.7, 8.27)
+        cbar_ax = fig.add_axes([.91, .3, .03, .4])
+        counter = 0
+
+        for i, ax in enumerate(axn.flat):
+            df = pd.DataFrame(self.x_square_tot[counter])
+            ax.set(xticks=[], yticks=[])
+            sns.heatmap(df, ax=ax, cbar=i == 0, cmap='YlGn',
+                        vmax=max_val, vmin=min_val,
+                        cbar_ax=None if i else cbar_ax)
+            counter = counter + 1
+            if counter >= self.hidden_layer_sizes[0]:
+                break
+
+        fig.tight_layout(rect=[0, 0, 0.9, 1])
+        if write_plot==True:
+            fig.savefig("high_a1_input.png", transparent=False, dpi=600)
+        plt.show()
+
+    def vis_input_network_diag(self, initial_guess, alpha_l1, alpha_l2, write_plot=False):
         """
         This function calculates the inputs that would give the highest activations of the neurons in the first hidden
         layer of the neural network. It then plots them as a netwrok graph.
@@ -758,10 +969,10 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         import networkx as nx
 
         if self.isVisReady == False:
-            self.x_square_tot = self.optimise_input(initial_guess, alpha_l1, alpha_l2, clipping)
+            self.x_square_tot = self.optimise_input_diag(initial_guess, alpha_l1, alpha_l2)
 
-        for i in range(len(self.x_square_tot)):
-            self.x_square_tot[i] = self.x_square_tot[i] * self.all_weights[1][0][i]
+        # for i in range(len(self.x_square_tot)):
+        #     self.x_square_tot[i] = self.x_square_tot[i] * self.all_weights[1][0][i]
 
         # max_val = np.amax(self.x_square_tot)
         # min_val = np.amin(self.x_square_tot)
@@ -809,6 +1020,101 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
             plt.savefig("high_a1_network.png")  # save as png
 
         plt.show()  # display
+
+    def vis_input_network_no_diag(self, initial_guess, alpha_l1, alpha_l2, write_plot=False):
+        """
+        This function calculates the inputs that would give the highest activations of the neurons in the first hidden
+        layer of the neural network. It then plots them as a netwrok graph.
+
+        :initial_guess: array of shape (n_features,)
+
+            A coulomb matrix to use as the initial guess to the gradient ascent in the hope that the closest local
+            maximum will be found.
+
+        :write_plot: boolean, default False
+
+            If this is true, the plot is written to a png file.
+        """
+        import networkx as nx
+
+        if self.isVisReady == False:
+            self.x_square_tot = self.optimise_input_no_diag(initial_guess, alpha_l1, alpha_l2)
+
+        # for i in range(len(self.x_square_tot)):
+        #     self.x_square_tot[i] = self.x_square_tot[i] * self.all_weights[1][0][i]
+
+        # max_val = np.amax(self.x_square_tot)
+        # min_val = np.amin(self.x_square_tot)
+
+        n = int(np.ceil(np.sqrt(self.hidden_layer_sizes)))
+
+        fig = plt.figure(figsize=(18, 15))
+        for i in range(n**2):
+            if i >= self.hidden_layer_sizes[0]:
+                break
+            fig.add_subplot(n,n,1+i)
+            A = np.matrix(self.x_square_tot[i])
+            graph2 = nx.from_numpy_matrix(A, parallel_edges=False)
+
+            pos = {}
+            for i in range(7):
+                x_point = 0.6*np.cos((i+1)*2*np.pi/7)
+                y_point = 0.6*np.sin((i+1)*2*np.pi/7)
+                pos[i] = np.array([x_point, y_point])
+            labels = {}
+            labels[0] = 'C'
+            labels[1] = 'H'
+            labels[2] = 'H'
+            labels[3] = 'H'
+            labels[4] = 'H'
+            labels[5] = 'C'
+            labels[6] = 'N'
+
+            colors = ["lightseagreen", "paleturquoise", "paleturquoise", "paleturquoise", "paleturquoise", "lightseagreen", "orchid"]
+
+
+            # edges widths
+            edgewidth = [d['weight'] for (u, v, d) in graph2.edges(data=True)]
+
+            plt.axis('off')
+            nx.draw_circular(graph2,
+                             width=edgewidth,
+                             with_labels=True, labels=labels, node_color=colors,
+                             edge_color=edgewidth, edge_cmap=plt.cm.Blues,
+                             # edge_vmin=min_val,
+                             # edge_vmax=max_val
+                             )
+
+        if write_plot==True:
+            plt.savefig("high_a1_network.png")  # save as png
+
+        plt.show()  # display
+
+    def max_act(self, X):
+        """
+        This function is used to calculate the activations of the only hidden layer.
+        :X: coulomb matrix - np array of shape (n_sample, n_features)
+        :return: activations - np array of shape (n_samples, n_hidden_layers)
+        """
+        input_x = tf.constant(X, dtype=tf.float32)
+        weights = []
+        biases = []
+
+        for ii in range(len(self.all_weights)):
+            weights.append(tf.constant(self.all_weights[ii]))
+            biases.append(tf.constant(self.all_biases[ii]))
+
+        z = tf.add(tf.matmul(input_x, tf.transpose(weights[0])), biases[0])
+        h = tf.nn.sigmoid(z)
+
+        init = tf.global_variables_initializer()
+
+        with tf.Session() as sess:
+            sess.run(init)
+            activations = sess.run(h)
+
+        return activations
+
 
 
 
