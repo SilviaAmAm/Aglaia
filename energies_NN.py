@@ -615,7 +615,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
             fig.savefig(name, transparent=False, dpi=100)
         plt.show()
 
-    def plotWeights_no_diag(self, plot_fig=False):
+    def plotWeights_no_diag(self, plot_fig=False, show_fig=False):
         """
         This function plots the weights of the first layer of the neural network as a heat map.
         """
@@ -630,7 +630,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         n = int(np.ceil(np.sqrt(self.hidden_layer_sizes)))
         additional = n**2 - self.hidden_layer_sizes[0]
 
-        fig, axn = plt.subplots(n, n, sharex=True, sharey=True)
+        fig, axn = plt.subplots(n, n, sharex='col', sharey='row')
         fig.set_size_inches(11.7, 8.27)
         cbar_ax = fig.add_axes([.91, .3, .03, .4])
 
@@ -648,7 +648,8 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         if plot_fig:
             name = "weights_" + str(self.alpha_l1) + ".png"
             fig.savefig(name, transparent=False, dpi=100)
-        # plt.show()
+        if show_fig:
+            plt.show()
 
     def reshape_triang_diag(self, X, dim):
         """
