@@ -631,7 +631,7 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
         additional = n**2 - self.hidden_layer_sizes[0]
 
         fig, axn = plt.subplots(n, n, sharex='col', sharey='row')
-        fig.set_size_inches(11.7, 8.27)
+        fig.set_size_inches(10, 10)
         cbar_ax = fig.add_axes([.91, .3, .03, .4])
 
         for i, ax in enumerate(axn.flat):
@@ -644,12 +644,12 @@ class Energies_NN(BaseEstimator, ClassifierMixin):
                         vmin=-60, vmax=60,
                         cbar_ax=None if i else cbar_ax, cmap="PiYG")
 
-        fig.tight_layout(rect=[0, 0, 0.9, 1])
         if plot_fig:
             name = "weights_" + str(self.alpha_l1) + ".png"
             fig.savefig(name, transparent=False, dpi=100)
         if show_fig:
             plt.show()
+        plt.clf()
 
     def reshape_triang_diag(self, X, dim):
         """

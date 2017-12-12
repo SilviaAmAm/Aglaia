@@ -12,3 +12,13 @@ Examples/*.bz
 Examples/l1_scan_img/
 
 Examples/demean_l1_scan/
+
+Examples/l1_scan_3neuron/
+
+Examples/scores\.txt
+
+*.xyz
+
+Examples/weights_l1_scan/
+
+Examples/scores_4_nodes\.txt
