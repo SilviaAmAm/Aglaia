@@ -8,7 +8,7 @@ Examples/Models/tensorboard/
 Examples/bc_tensorboard/
 Examples/Scans_l1/*.csv
 Examples/*.bz
-
+Examples/*.png
 Examples/l1_scan_img/
 
 Examples/demean_l1_scan/
