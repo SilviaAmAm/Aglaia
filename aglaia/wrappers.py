@@ -17,7 +17,7 @@ try:
 except ModuleNotFoundError:
     raise ModuleNotFoundError("The module qml is required")
 
-from .aglaia import _NN, MRMP, ARMP
+from .aglaia import _NN, MRMP, ARMP, ARMP_G
 from .utils import InputError, is_array_like, is_numeric_array, is_positive_integer, is_positive_integer_or_zero, \
         is_non_zero_integer, is_positive_integer_or_zero_array, is_dict, is_none, is_string, is_positive, is_bool
 
@@ -1077,3 +1077,9 @@ class OAMNN(ARMP, _ONN):
         x, zs = self.get_descriptors_from_indices(indices)
         y_pred = self._predict([x, zs])
         return y_pred
+
+# Osprey atomic neural network, molecular properties and gradients
+
+class OAMNN_G(ARMP_G, _ONN):
+
+

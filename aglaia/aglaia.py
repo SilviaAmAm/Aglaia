@@ -1385,3 +1385,21 @@ class ARMP(_NN):
 
         self.session = tf.Session(graph=tf.get_default_graph())
         tf.saved_model.loader.load(self.session, [tf.saved_model.tag_constants.SERVING], save_dir)
+
+### --------------------- ** Atomic representation - molecular properties with gradients network ** --------------------
+
+class ARMP_G(_NN):
+
+    def __init__(self, **kwargs):
+        """
+        To see what parameters are required, look at the description of the _NN class init.
+        This class inherits from the _NN class and all inputs not unique to the ARMP class are passed to the _NN
+        parent.
+        """
+        super(ARMP_G, self).__init__(**kwargs)
+
+    # TODO fit function: takes as input tensors rather than numpy arrays. Needs gradients in addition to x and y and z
+
+    # TODO predict function: returns gradients as well as y
+
+    # TODO score function: takes as input gradients in addition to x, y and z
