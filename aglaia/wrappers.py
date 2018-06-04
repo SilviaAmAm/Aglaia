@@ -1058,7 +1058,62 @@ class OAMNN(ARMP, _ONN):
         return y_pred
 
 # Osprey atomic neural network, molecular properties and gradients
-
 class OAMNN_G(ARMP_G, _ONN):
+
+    def __init__(self, representation = 'atomic_coulomb_matrix', radial_cutoff=10.0, angular_cutoff=10.0,
+                 radial_rs=(0.0, 0.1, 0.2), angular_rs=(0.0, 0.1, 0.2), theta_s=(3.0, 2.0), zeta=3.0,
+                 eta=2.0, compounds = None, properties = None, **kwargs):
+        """
+        A molecule's cartesian coordinates and chemical composition is transformed into a descriptor for the molecule,
+        which is then used as input to a single or multi layered feedforward neural network with a single output.
+        This class inherits from the ARMP and _ONN class and all inputs not unique to the OAMNN class is passed to the
+        parents.
+
+        Available representations at the moment are ['unsorted_coulomb_matrix', 'sorted_coulomb_matrix',
+        bag_of_bonds', 'slatm'].
+
+        :param representation: Name of molecular representation.
+        :type representation: string
+        :param radial_cutoff: Distange pas which no two-body interactions are evaluated
+        :type radial_cutoff: float
+        :param angular_cutoff: Distange pas which no three-body interactions are evaluated
+        :type angular_cutoff: float
+        :param radial_rs: ACSF parameter
+        :type radial_rs: tuple or list of floats
+        :param angular_rs: ACSF parameter
+        :type angular_rs: tuple or list of floats
+        :param theta_s: ACSF parameter
+        :type theta_s: tuple or list of floats
+        :param zeta: ACSF parameter
+        :type zeta: float
+        :param eta: ACSF parameter
+        :type eta: float
+        :param compounds: Contains informations about xyz, zs, ... of all the samples in the data
+        :type compounds: list of qml Compounds objects
+        :param properties: Molecular properties for all data samples
+        :type properties: list
+        """
+
+        # TODO try to avoid directly passing compounds and properties. That shouldn't be needed.
+        super(OAMNN_G,self).__init__(compounds = compounds, properties = properties, **kwargs)
+
+        self._set_representation(representation)
+
+        if self.representation == 'atomic_coulomb_matrix':
+            print("Atomic Coulomb matrix not implemented yet. ")
+        if self.representation == 'slatm':
+            print("Atomic Coulomb matrix not implemented yet. ")
+        if self.representation == 'acsf':
+            self._set_acsf(radial_cutoff, angular_cutoff, radial_rs, angular_rs, theta_s, zeta, eta)
+
+# TODO set representations function
+
+# TODO set gradients data function
+
+# TODO generate descriptors function (hidden method)
+
+# TODO fit function
+
+# TODO predict function
 
 
