@@ -792,12 +792,10 @@ class OAMNN(ARMP, _ONN):
 
     def _set_representation(self, representation):
         """
-        This function sets the parameter that says which descriptor is going to be used. It also sets the slatm
-        parameters (even if the slatm representation isn't going to be used??)
+        This function sets the parameter that says which descriptor is going to be used.
 
-        :param representation: Name of descriptor to use (string)
-        :param args: slatm parameters: slatm_sigma1, slatm_sigma2, slatm_dgrid1, slatm_dgrid2, slatm_rcut,
-                slatm_rpower, slatm_alchemy.
+        :param representation: Name of descriptor to use
+        :type representation: string
         :return: None
         """
 
@@ -1100,20 +1098,33 @@ class OAMNN_G(ARMP_G, _ONN):
         self._set_representation(representation)
 
         if self.representation == 'atomic_coulomb_matrix':
-            print("Atomic Coulomb matrix not implemented yet. ")
+            raise InputError("Atomic Coulomb matrix not implemented yet. ")
         if self.representation == 'slatm':
-            print("Atomic Coulomb matrix not implemented yet. ")
+            raise InputError("Slatm not implemented yet. ")
         if self.representation == 'acsf':
             self._set_acsf(radial_cutoff, angular_cutoff, radial_rs, angular_rs, theta_s, zeta, eta)
 
-# TODO set representations function
+    def _set_representation(self, representation):
+        """
+        This function sets the parameter that says which descriptor is going to be used.
 
-# TODO set gradients data function
+        :param representation: Name of descriptor to use
+        :type representation: string
+        :return: None
+        """
 
-# TODO generate descriptors function (hidden method)
+        if not is_string(representation):
+            raise InputError("Expected string for variable 'representation'. Got %s" % str(representation))
+        if representation.lower() not in ['atomic_coulomb_matrix', 'slatm', 'acsf']:
+            raise InputError("Unknown representation %s" % representation)
+        self.representation = representation.lower()
 
-# TODO fit function
+    # TODO set gradients data function
 
-# TODO predict function
+    # TODO Generate descriptor from indices from inside the fit function
+
+    # TODO fit function
+
+    # TODO predict function
 
 

@@ -543,6 +543,22 @@ class _NN(object):
 
         return better_batch_size
 
+    def _find_elements(self, zs):
+        """
+        This function finds the unique atomic numbers in Zs and returns them in a list.
+
+        :param zs: nuclear charges
+        :type zs: numpy array of floats of shape (n_samples, n_atoms)
+        :return: unique nuclear charges
+        :rtype: numpy array of floats of shape (n_elements,)
+        """
+
+        # Obtaining the unique atomic numbers (but still includes the dummy atoms)
+        elements = np.unique(zs)
+
+        # Removing the dummy
+        return np.trim_zeros(elements)
+
     def plot_cost(self, filename = None):
         """
         Plots the value of the cost function as a function of the iterations.
@@ -1112,22 +1128,6 @@ class ARMP(_NN):
 
         return cost_function
 
-    def _find_elements(self, zs):
-        """
-        This function finds the unique atomic numbers in Zs and returns them in a list.
-
-        :param zs: nuclear charges
-        :type zs: numpy array of floats of shape (n_samples, n_atoms)
-        :return: unique nuclear charges
-        :rtype: numpy array of floats of shape (n_elements,)
-        """
-
-        # Obtaining the unique atomic numbers (but still includes the dummy atoms)
-        elements = np.unique(zs)
-
-        # Removing the dummy
-        return np.trim_zeros(elements)
-
     def _fit(self, xzs, y):
         """
         This class fits the neural network to the data. x corresponds to the descriptors and y to the molecular
@@ -1138,7 +1138,7 @@ class ARMP(_NN):
         :type x: numpy array of floats of shape (n_samples, n_atoms, n_features)
         :type zs: numpy array of floats of shape (n_samples, n_atoms)
         :param y: molecular properties
-        :type y: numpy array of floats of shape (n_samples, 1)
+        :type y: numpy array of floats of shape (n_samples, 1) TODO check this, isn't it (n_samples,)?
         :return: None
         """
 
@@ -1398,7 +1398,70 @@ class ARMP_G(_NN):
         """
         super(ARMP_G, self).__init__(**kwargs)
 
-    # TODO fit function: takes as input tensors rather than numpy arrays. Needs gradients in addition to x and y and z
+    def _check_input(self, xzs, ydy):
+        """
+        This function checks that the inputs to the fit function are reasonable.
+
+        :param xzs: list of the cartesian coordinates and the nuclear charges
+        :type xzs: list of [x, zs] where:
+        :type x: numpy array of shape (n_samples, n_atoms, 3)
+        :type zs: numpy array of shape (n_samples, n_atoms)
+        :param ydy: List of energies and gradients
+        :type ydy: list of [y, dy] where:
+        :type y: numpy array of shape (n_samples, 1)
+        :type dy: numpy array of shape (n_samples, n_atoms, 3)
+        :return: None
+        """
+        if not is_array_like(xzs):
+            raise InputError("Input xzs should be a list containing coordinates and nuclear charges.")
+        if len(xzs) != 2:
+            raise InputError("Input xzs should be a list of length 2. Got %s" % (len(xzs)))
+        if not is_array_like(ydy):
+            raise InputError("Input ydy should be a list containing energies and forces.")
+        if len(ydy) != 2:
+            raise InputError("Input ydy should be a list of length 2. Got %s" % (len(ydy)))
+
+    def _fit(self, xzs, ydy):
+        """
+        This function fits the model to the data provided. The data must include the cartesian coordinates (x),
+        the nuclear charges (zs), the gradients of the energy (dy) and the energies (y).
+
+        :param xzs: list of the cartesian coordinates and the nuclear charges
+        :type xzs: list of [x, zs] where:
+        :type x: numpy array of shape (n_samples, n_atoms, 3)
+        :type zs: numpy array of shape (n_samples, n_atoms)
+        :param ydy: List of energies and gradients
+        :type ydy: list of [y, dy] where:
+        :type y: numpy array of shape (n_samples,)
+        :type dy: numpy array of shape (n_samples, n_atoms, 3)
+        :return: None
+        """
+
+        self._check_input(xzs, ydy)
+
+        x = xzs[0]
+        zs = xzs[1]
+        y = np.atleast_2d(ydy[0]).T     # Reshaping to TF friendly shape
+        dy = ydy[1]
+
+        # Useful quantities
+        self.elements = self._find_elements(zs)
+        self.n_samples = x.shape[0]
+        self.n_atoms = x.shape[1]
+        self.n_features = x.shape[2]
+
+        # Set the batch size
+        batch_size = self._get_batch_size()
+
+        # This is the total number of batches in which the training set is divided
+        n_batches = ceil(self.n_samples, batch_size)
+
+        tf.reset_default_graph()
+
+        # Making the descriptor
+
+
+
 
     # TODO predict function: returns gradients as well as y
 
