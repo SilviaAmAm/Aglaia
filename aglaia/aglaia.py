@@ -1421,44 +1421,21 @@ class ARMP_G(_NN):
         if len(ydy) != 2:
             raise InputError("Input ydy should be a list of length 2. Got %s" % (len(ydy)))
 
-    def _fit(self, xzs, ydy):
+    def _fit(self, x, ydy):
         """
         This function fits the model to the data provided. The data must include the cartesian coordinates (x),
         the nuclear charges (zs), the gradients of the energy (dy) and the energies (y).
 
-        :param xzs: list of the cartesian coordinates and the nuclear charges
-        :type xzs: list of [x, zs] where:
-        :type x: numpy array of shape (n_samples, n_atoms, 3)
-        :type zs: numpy array of shape (n_samples, n_atoms)
+        :param x: descriptor
+        :type x: tensor of shape (n_samples, n_atoms, n_features)
         :param ydy: List of energies and gradients
         :type ydy: list of [y, dy] where:
-        :type y: numpy array of shape (n_samples,)
-        :type dy: numpy array of shape (n_samples, n_atoms, 3)
+        :type y: tensor of shape (n_samples, 1)
+        :type dy: tensor of shape (n_samples, n_atoms, 3)
         :return: None
         """
 
-        self._check_input(xzs, ydy)
 
-        x = xzs[0]
-        zs = xzs[1]
-        y = np.atleast_2d(ydy[0]).T     # Reshaping to TF friendly shape
-        dy = ydy[1]
-
-        # Useful quantities
-        self.elements = self._find_elements(zs)
-        self.n_samples = x.shape[0]
-        self.n_atoms = x.shape[1]
-        self.n_features = x.shape[2]
-
-        # Set the batch size
-        batch_size = self._get_batch_size()
-
-        # This is the total number of batches in which the training set is divided
-        n_batches = ceil(self.n_samples, batch_size)
-
-        tf.reset_default_graph()
-
-        # Making the descriptor
 
 
 

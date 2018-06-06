@@ -1042,7 +1042,7 @@ class OAMNN(ARMP, _ONN):
         idx = np.asarray(indices, dtype=int).ravel()
         y = self.properties[idx]
 
-        self._fit(x, zs, y)
+        self._fit([x, zs], y)
 
     def predict(self, indices):
         """
@@ -1119,11 +1119,212 @@ class OAMNN_G(ARMP_G, _ONN):
             raise InputError("Unknown representation %s" % representation)
         self.representation = representation.lower()
 
-    # TODO set gradients data function
+    def set_gradients(self, dy):
+        """
+        This function sets the gradients of the properties.
 
-    # TODO Generate descriptor from indices from inside the fit function
+        :param dy: the gradients of the properties
+        :type dy: np array of shape (n_samples, n_atoms, 3)
+        :return: None
+        """
 
-    # TODO fit function
+        if not is_none(dy):
+            if is_numeric_array(dy) and np.asarray(dy).ndim == 3:
+                self.prop_grad = np.asarray(dy)
+            else:
+                raise InputError(
+                    'Variable "dy" expected to be array of dimensions (n_samples, n_atoms, 3). Got %s' % str(dy.shape))
+        else:
+            self.prop_grad = None
+
+    def _generate_descriptor(self, batch_xyz, batch_zs):
+        """
+        This function generates the descriptor for the data points specified by the indices.
+
+        :param indices: indices of data points in the data set
+        :type indices: array of ints
+        :return: descriptors for the data points specified
+        :rtype: tensor of shape (n_samples, n_atoms, n_features)
+        """
+
+        descriptor = None
+
+        if self.representation == 'acsf':
+            descriptor = self._generate_acsf(batch_xyz, batch_zs)
+        else:
+            raise InputError("This descriptor has not been implemented yet.")
+
+        return descriptor
+
+    def _generate_acsf(self, batch_xyz, batch_zs):
+        """
+        This function creates the acsf for data points specified by the indices.
+
+        :param indices: indices of the data points in the data set
+        :return: descriptor
+        :rtype: tensor of shape (n_samples, n_atoms, n_features)
+        """
+
+        descriptor = sf.generate_parkhill_acsf(xyzs=batch_xyz, Zs=batch_zs, elements=self.train_elements,
+                                               element_pairs=self.train_element_pairs,
+                                               radial_cutoff=self.radial_cutoff, angular_cutoff=self.angular_cutoff,
+                                               radial_rs=self.radial_rs, angular_rs=self.angular_rs,
+                                               theta_s=self.theta_s,
+                                               eta=self.eta, zeta=self.zeta)
+
+        return descriptor
+
+    def _get_elements(self, compounds):
+        """
+        This function takes some QML compounds objects and returns the elements and the element pairs present in all the
+        compounds. The elements and element pairs are ordered in descending order.
+
+        :param compounds: QML objects
+        :return: elements and element types
+        :rtype: two lists of floats
+        """
+
+        mbtypes = representations.get_slatm_mbtypes([mol.nuclear_charges for mol in compounds])
+
+        elements = []
+        element_pairs = []
+
+        # Splitting the one and two body interactions in mbtypes
+        for item in mbtypes:
+            if len(item) == 1:
+                elements.append(item[0])
+            if len(item) == 2:
+                element_pairs.append(list(item))
+            if len(item) == 3:
+                break
+
+        # Need the element pairs in descending order for TF
+        for item in element_pairs:
+            item.reverse()
+
+        return elements, element_pairs
+
+    def _get_xyz_zs(self, compounds):
+        """
+        This function extracts the xyz and the nuclear charges from all the compounds.
+
+        :param compounds: QML objects
+        :return: xyz and zs
+        :rtype: a np array of shape (n_samples, n_atoms, 3) and (n_samples, n_atoms)
+        """
+
+        xyzs = []
+        zs = []
+        max_n_atoms = 0
+
+        for compound in compounds:
+            xyzs.append(compound.coordinates)
+            zs.append(compound.nuclear_charges)
+            if len(compound.nuclear_charges) > max_n_atoms:
+                max_n_atoms = len(compound.nuclear_charges)
+
+        # Padding so that all the samples have the same shape
+        n_samples = len(zs)
+        for i in range(n_samples):
+            current_n_atoms = len(zs[i])
+            missing_n_atoms = max_n_atoms - current_n_atoms
+            zs_padding = np.zeros(missing_n_atoms)
+            zs[i] = np.concatenate((zs[i], zs_padding))
+            xyz_padding = np.zeros((missing_n_atoms, 3))
+            xyzs[i] = np.concatenate((xyzs[i], xyz_padding))
+
+        zs = np.asarray(zs, dtype=np.int32)
+        xyzs = np.asarray(xyzs, dtype=np.float32)
+
+        return xyzs, zs
+
+    def fit(self, indices, y=None):
+        """
+        This function takes indices as an input and fits a neural network to the data points corresponding to those
+        indices.
+
+        :param indices: indices of the data points to use in the traing.
+        :type indices: array of int
+        :param y: Needs to be included to make this work with Osprey
+        :return: None
+        """
+
+        if is_none(self.properties):
+            raise InputError("Properties need to be set in advance")
+        if is_none(self.prop_grad):
+            raise InputError("Gradients need to be set in advance")
+        if is_none(self.compounds):
+            raise InputError("QML compounds needs to be created in advance")
+
+        # Extracting the subset of data points
+        sub_compounds = self.compounds[indices]
+
+        # Obtaining the total elements and element pairs ordered in descending order
+        self.train_elements, self.train_element_pairs = self._get_elements(sub_compounds)
+
+        # Obtaining coordinates and nuclear charges from compounds
+        xyz, zs = self._get_xyz_zs(sub_compounds)
+
+        # Useful quantities
+        n_samples = xyz.shape[0]
+        max_n_atoms = zs.shape[1]
+        batch_size = 20  # Need to find a clever way of doing this
+
+        # Turning the quantities into tensors
+        with tf.name_scope("X_Inputs"):
+            zs_tf = tf.placeholder(shape=[n_samples, max_n_atoms], dtype=tf.int32, name="zs")
+            xyz_tf = tf.placeholder(shape=[n_samples, max_n_atoms, 3], dtype=tf.float32, name="xyz")
+
+            dataset = tf.data.Dataset.from_tensor_slices((xyz_tf, zs_tf))
+            dataset = dataset.batch(batch_size)
+            iterator = tf.data.Iterator.from_structure(dataset.output_types, dataset.output_shapes)
+            batch_xyz, batch_zs = iterator.get_next()
+
+        with tf.name_scope("Y_inputs"):
+            y_tf = tf.placeholder(shape=[n_samples, 1], dtype=tf.float32, name="Energies")
+            dy_tf = tf.placeholder(shape=[n_samples, max_n_atoms, 3], dtype=tf.int32, name="Forces")
+
+        # Making the descriptor
+        descriptor = self._generate_descriptor(batch_xyz, batch_zs)
+
+        # Generating the weights and biases
+        element_weights, element_biases = self._make_weights_biases()
+
+        # Creating the model
+
+        # Calculating the cost
+
+
+
+    # TODO make model function
+
+    def _make_weights_biases(self):
+        """
+        This function uses the self.elements data to initialise tensors of weights and biases for each element present
+        in the system.
+
+        :return: dictionaries of weights and biases for each element
+        :rtype: two dictionaries where the keys are ints and the value are tensors
+        """
+        element_weights = {}
+        element_biases = {}
+
+        with tf.name_scope("Weights"):
+            for i in range(self.train_elements.shape[0]):
+                weights, biases = self._generate_weights(n_out=1)
+                element_weights[self.train_elements[i]] = weights
+                element_biases[self.train_elements[i]] = biases
+
+                # Log weights for tensorboard
+                if self.tensorboard:
+                    self.tensorboard_logger.write_weight_histogram(weights)
+
+        return element_weights, element_biases
+
+
+
+
+
 
     # TODO predict function
 
