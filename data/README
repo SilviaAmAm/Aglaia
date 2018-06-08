@@ -3,3 +3,6 @@ The qm7 folder contains many different molecules all in their own xyz file and t
 The local_slatm_qm7_light.bz contains the first 100 samples of the qm7 (dictionary keys: 'descriptor', 'zs', 'energies').
 
 The local_slatm_ch4cn.bz and local_slatm_ch4cn_light.bz contain the local slatm descriptor, the zs and the kJ/mol demeaned energies (CCSD) for the CH4 + CN data set generated in VR. The full version has 17864 samples, while the light version has 100 samples.
+
+The CN_isopentane_forces.npz contains 621 data points straight out from vr with coordinates, nuclear charges, energies and forces (in this order).
+The units are kcal/mol and kcal/(mol*A).

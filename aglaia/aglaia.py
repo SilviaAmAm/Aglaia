@@ -13,6 +13,12 @@ import tensorflow as tf
 from sklearn.utils.validation import check_X_y, check_array
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 import matplotlib.pyplot as plt
+import aglaia.symm_funct as sf
+
+try:
+    from qml import representations
+except ModuleNotFoundError:
+    raise ModuleNotFoundError("The module qml is required")
 #import inverse_dist as inv
 #from tensorflow.python.framework import ops
 #from tensorflow.python.training import saver as saver_lib
@@ -22,7 +28,7 @@ import matplotlib.pyplot as plt
 #from .utils import is_positive, is_positive_integer, is_positive_integer_or_zero, \
 #       is_bool, is_string, is_positive_or_zero, InputError, ceil
 from .utils import InputError, ceil, is_positive_or_zero, is_positive_integer, is_positive, \
-        is_bool, is_positive_integer_or_zero, is_string, is_positive_integer_array, is_array_like
+        is_bool, is_positive_integer_or_zero, is_string, is_positive_integer_array, is_array_like, is_numeric_array
 from .tf_utils import TensorBoardLogger
 
 class _NN(object):
@@ -410,6 +416,69 @@ class _NN(object):
             self.tensorboard_logger.set_store_frequency(self.iterations)
         else:
             self.tensorboard_logger.set_store_frequency(store_frequency)
+
+    def _set_representation(self, representation):
+        """
+        This function sets the parameter that says which descriptor is going to be used.
+
+        :param representation: Name of descriptor to use
+        :type representation: string
+        :return: None
+        """
+
+        if not is_string(representation):
+            raise InputError("Expected string for variable 'representation'. Got %s" % str(representation))
+        if representation.lower() not in ['acsf']:
+            raise InputError("Unknown representation %s" % representation)
+        self.representation = representation.lower()
+
+    def _set_acsf(self, radial_cutoff, angular_cutoff, radial_rs, angular_rs, theta_s, zeta, eta):
+        """
+        This function sets the parameters for the acsf as described in the Tensormol paper.
+
+        :param radial_cutoff: float
+        :param angular_cutoff: float
+        :param radial_rs: np array of floats of shape (n_rad_rs,)
+        :param angular_rs:  np array of floats of shape (n_ang_rs,)
+        :param theta_s: np array of floats of shape (n_theta_s,)
+        :param zeta: float
+        :param eta: float
+        :return: None
+        """
+
+        if not is_positive(radial_cutoff):
+            raise InputError("Expected positive float for variable 'radial_cutoff'. Got %s." % str(radial_cutoff))
+        self.radial_cutoff = float(radial_cutoff)
+
+        if not is_positive(angular_cutoff):
+            raise InputError("Expected positive float for variable 'angular_cutoff'. Got %s." % str(angular_cutoff))
+        self.angular_cutoff = float(angular_cutoff)
+
+        if not is_numeric_array(radial_rs):
+            raise InputError("Expecting an array like radial_rs. Got %s." % (radial_rs) )
+        if not len(radial_rs)>0:
+            raise InputError("No radial_rs values were given." )
+        self.radial_rs = list(radial_rs)
+
+        if not is_numeric_array(angular_rs):
+            raise InputError("Expecting an array like angular_rs. Got %s." % (angular_rs) )
+        if not len(angular_rs)>0:
+            raise InputError("No angular_rs values were given." )
+        self.angular_rs = list(angular_rs)
+
+        if not is_numeric_array(theta_s):
+            raise InputError("Expecting an array like theta_s. Got %s." % (theta_s) )
+        if not len(theta_s)>0:
+            raise InputError("No theta_s values were given. " )
+        self.theta_s = list(theta_s)
+
+        if is_numeric_array(eta):
+            raise InputError("Expecting a scalar value for eta. Got %s." % (eta))
+        self.eta = eta
+
+        if is_numeric_array(zeta):
+            raise InputError("Expecting a scalar value for zeta. Got %s." % (zeta))
+        self.zeta = zeta
 
     def _init_weight(self, n1, n2, name):
         """
@@ -1165,8 +1234,6 @@ class ARMP(_NN):
         # This is the total number of batches in which the training set is divided
         n_batches = ceil(self.n_samples, batch_size)
 
-        tf.reset_default_graph()
-
         # Initial set up of the NN
         with tf.name_scope("Data"):
             x_ph = tf.placeholder(dtype=self.tf_dtype, shape=[None, self.n_atoms, self.n_features])
@@ -1390,13 +1457,23 @@ class ARMP(_NN):
 
 class ARMP_G(_NN):
 
-    def __init__(self, **kwargs):
+    def __init__(self, representation = "acsf", radial_cutoff=10.0, angular_cutoff=10.0, radial_rs=(0.0, 0.1, 0.2),
+                 angular_rs=(0.0, 0.1, 0.2), theta_s=(3.0, 2.0), zeta=3.0, eta=2.0, **kwargs):
         """
         To see what parameters are required, look at the description of the _NN class init.
         This class inherits from the _NN class and all inputs not unique to the ARMP class are passed to the _NN
         parent.
         """
         super(ARMP_G, self).__init__(**kwargs)
+
+        self._set_representation(representation)
+
+        if self.representation == 'atomic_coulomb_matrix':
+            raise InputError("Atomic Coulomb matrix not implemented yet. ")
+        if self.representation == 'slatm':
+            raise InputError("Slatm not implemented yet. ")
+        if self.representation == 'acsf':
+            self._set_acsf(radial_cutoff, angular_cutoff, radial_rs, angular_rs, theta_s, zeta, eta)
 
     def _check_input(self, xzs, ydy):
         """
@@ -1421,24 +1498,278 @@ class ARMP_G(_NN):
         if len(ydy) != 2:
             raise InputError("Input ydy should be a list of length 2. Got %s" % (len(ydy)))
 
-    def _fit(self, x, ydy):
+    def _get_elements(self, zs):
         """
-        This function fits the model to the data provided. The data must include the cartesian coordinates (x),
-        the nuclear charges (zs), the gradients of the energy (dy) and the energies (y).
+        This function takes some QML compounds objects and returns the elements and the element pairs present in all the
+        compounds. The elements and element pairs are ordered in descending order.
 
-        :param x: descriptor
-        :type x: tensor of shape (n_samples, n_atoms, n_features)
-        :param ydy: List of energies and gradients
-        :type ydy: list of [y, dy] where:
-        :type y: tensor of shape (n_samples, 1)
-        :type dy: tensor of shape (n_samples, n_atoms, 3)
-        :return: None
+        :param compounds: QML objects
+        :return: elements and element types
+        :rtype: two lists of floats
         """
 
+        mbtypes = representations.get_slatm_mbtypes([item for item in zs])
 
+        elements = []
+        element_pairs = []
 
+        # Splitting the one and two body interactions in mbtypes
+        for item in mbtypes:
+            if len(item) == 1:
+                elements.append(item[0])
+            if len(item) == 2:
+                element_pairs.append(list(item))
+            if len(item) == 3:
+                break
 
+        # Need the element pairs in descending order for TF
+        for item in element_pairs:
+            item.reverse()
 
+        elements_np = np.asarray(elements,dtype=np.int32)
+        element_pairs_np = np.asarray(element_pairs, dtype=np.int32)
+
+        return elements_np, element_pairs_np
+
+    def _generate_descriptor(self, batch_xyz, batch_zs, batch_y, batch_dy):
+        """
+        This function generates the descriptor for the data points specified by the indices.
+
+        :param indices: indices of data points in the data set
+        :type indices: array of ints
+        :return: descriptors for the data points specified
+        :rtype: tensor of shape (n_samples, n_atoms, n_features)
+        """
+
+        descriptor = None
+
+        if self.representation == 'acsf':
+            descriptor = self._generate_acsf(batch_xyz, batch_zs)
+        else:
+            raise InputError("This descriptor has not been implemented yet.")
+
+        return descriptor, batch_zs, batch_y, batch_dy
+
+    def _generate_acsf(self, batch_xyz, batch_zs):
+        """
+        This function creates the acsf for data points specified by the indices.
+
+        :param indices: indices of the data points in the data set
+        :return: descriptor
+        :rtype: tensor of shape (n_samples, n_atoms, n_features)
+        """
+
+        descriptor = sf.generate_parkhill_acsf_1(xyzs=batch_xyz, Zs=batch_zs, elements=self.train_elements,
+                                               element_pairs=self.train_element_pairs,
+                                               radial_cutoff=self.radial_cutoff, angular_cutoff=self.angular_cutoff,
+                                               radial_rs=self.radial_rs, angular_rs=self.angular_rs,
+                                               theta_s=self.theta_s,
+                                               eta=self.eta, zeta=self.zeta)
+
+        return descriptor
+
+    def _make_weights_biases(self, train_elements):
+        """
+        This function uses the self.elements data to initialise tensors of weights and biases for each element present
+        in the system.
+
+        :return: dictionaries of weights and biases for each element
+        :rtype: two dictionaries where the keys are ints and the value are tensors
+        """
+        element_weights = {}
+        element_biases = {}
+
+        with tf.name_scope("Weights"):
+            for i in range(train_elements.shape[0]):
+                weights, biases = self._generate_weights(n_out=1)
+                element_weights[train_elements[i]] = weights
+                element_biases[train_elements[i]] = biases
+
+                # Log weights for tensorboard
+                if self.tensorboard:
+                    self.tensorboard_logger.write_weight_histogram(weights)
+
+        return element_weights, element_biases
+
+    def _atomic_model(self, x, hidden_layer_sizes, weights, biases):
+        """
+        Constructs the atomic part of the network. It calculates the output for all atoms as if they all were the same
+        element.
+
+        :param x: Atomic descriptor
+        :type x: tf tensor of shape (n_samples, n_atoms, n_features)
+        :param weights: Weights used in the network for a particular element.
+        :type weights: list of tf.Variables of length hidden_layer_sizes.size + 1
+        :param biases: Biases used in the network for a particular element.
+        :type biases: list of tf.Variables of length hidden_layer_sizes.size + 1
+        :return: Output
+        :rtype: tf.Variable of size (n_samples, n_atoms)
+        """
+
+        # Calculate the activation of the first hidden layer
+        z = tf.add(tf.tensordot(x, tf.transpose(weights[0]), axes=1), biases[0])
+        h = self.activation_function(z)
+
+        # Calculate the activation of the remaining hidden layers
+        for i in range(hidden_layer_sizes.size - 1):
+            z = tf.add(tf.tensordot(h, tf.transpose(weights[i + 1]), axes=1), biases[i + 1])
+            h = self.activation_function(z)
+
+        # Calculating the output of the last layer
+        z = tf.add(tf.tensordot(h, tf.transpose(weights[-1]), axes=1), biases[-1])
+
+        z_squeezed = tf.squeeze(z, axis=[-1])
+
+        return z_squeezed
+
+    def _model(self, x, zs, element_weights, element_biases, elements):
+        """
+        This generates the molecular model by combining all the outputs from the atomic networks.
+
+        :param x: Atomic descriptor
+        :type x: tf tensor of shape (n_samples, n_atoms, n_features)
+        :param zs: Nuclear charges of the systems
+        :type zs: tf tensor of shape (n_samples, n_atoms)
+        :param element_weights: Element specific weights
+        :type element_weights: list of tf.Variables of length hidden_layer_sizes.size + 1
+        :param element_biases: Element specific biases
+        :type element_biases: list of tf.Variables of length hidden_layer_sizes.size + 1
+        :return: Predicted properties for all samples
+        :rtype: tf tensor of shape (n_samples, 1)
+        """
+
+        atomic_energies = tf.zeros_like(zs, dtype=tf.float32)
+
+        for i in range(elements.shape[0]):
+            # Calculating the output for every atom in all data as if they were all of the same element
+            atomic_energies_all = self._atomic_model(x, self.hidden_layer_sizes,
+                                                     element_weights[elements[i]],
+                                                     element_biases[elements[i]])  # (n_samples, n_atoms)
+
+            # Figuring out which atomic energies correspond to the current element.
+            current_element = tf.expand_dims(tf.constant(elements[i], dtype=tf.int32), axis=0)
+            where_element = tf.equal(tf.cast(zs, dtype=tf.int32), current_element)  # (n_samples, n_atoms)
+
+            # Extracting the energies corresponding to the right element
+            element_energies = tf.where(where_element, atomic_energies_all, tf.zeros_like(zs, dtype=tf.float32))
+
+            # Adding the energies of the current element to the final atomic energies tensor
+            atomic_energies = tf.add(atomic_energies, element_energies)
+
+        # Summing the energies of all the atoms
+        total_energies = tf.reduce_sum(atomic_energies, axis=-1, name="output", keepdims=True)
+
+        return total_energies
+
+    def _cost(self, y_true, y_nn, dy_true, dy_nn, weights_dict):
+
+        ene_err = tf.square(tf.subtract(y_true, y_nn))
+        force_err = tf.square(tf.subtract(dy_true, dy_nn))
+
+        cost_function = tf.add(tf.reduce_mean(ene_err), tf.reduce_mean(force_err), name="loss")
+
+        if self.l2_reg > 0:
+            l2_loss = 0
+            for element in weights_dict:
+                l2_loss += self._l2_loss(weights_dict[element])
+            cost_function += l2_loss
+        if self.l1_reg > 0:
+            l1_loss = 0
+            for element in weights_dict:
+                l1_loss += self._l1_loss(weights_dict[element])
+            cost_function += l1_loss
+
+        return cost_function
+
+    def _fit(self, xyz_zs, ydy):
+
+        self._check_input(xyz_zs, ydy)
+
+        xyz = xyz_zs[0]
+        zs = xyz_zs[1]
+        y = ydy[0]
+        dy = ydy[1]
+
+        self.train_elements, self.train_element_pairs = self._get_elements(zs)
+
+        # Useful quantities
+        self.n_samples = xyz.shape[0]
+        max_n_atoms = zs.shape[1]
+        self.n_features = len(self.train_elements) * len(self.radial_rs) + len(self.train_element_pairs) * len(self.angular_rs) * len(self.theta_s)
+        decriptor_batch_size = 20  # Need to find a clever way of doing this
+
+        training_batch_size = self._get_batch_size()
+        n_training_batches = ceil(self.n_samples, training_batch_size)
+
+        # Turning the quantities into tensors
+        with tf.name_scope("Data"):
+            zs_tf = tf.placeholder(shape=[self.n_samples, max_n_atoms], dtype=tf.int32, name="zs")
+            xyz_tf = tf.placeholder(shape=[self.n_samples, max_n_atoms, 3], dtype=tf.float32, name="xyz")
+            y_tf = tf.placeholder(shape=[self.n_samples, 1], dtype=tf.float32, name="Energies")
+            dy_tf = tf.placeholder(shape=[self.n_samples, max_n_atoms, 3], dtype=tf.float32, name="Forces")
+
+            dataset = tf.data.Dataset.from_tensor_slices((xyz_tf, zs_tf, y_tf, dy_tf))
+            dataset = dataset.map(self._generate_descriptor)
+            dataset = dataset.batch(decriptor_batch_size)
+            iterator = tf.data.Iterator.from_structure(dataset.output_types, dataset.output_shapes)
+            batch_descriptor, batch_zs, batch_y, batch_dy = iterator.get_next()
+
+        grad = tf.gradients(batch_descriptor, xyz_tf)
+
+        # Generating the weights and biases
+        element_weights, element_biases = self._make_weights_biases(self.train_elements)
+
+        # Creating the model
+        with tf.name_scope("Model"):
+            energies = self._model(batch_descriptor, batch_zs, element_weights, element_biases, self.train_elements)
+            forces = tf.gradients(energies, xyz_tf, name='NN_Forces')
+
+        # Calculating the cost
+        with tf.name_scope("Cost"):
+            cost = self._cost(batch_y, energies, batch_dy, forces, element_weights)
+
+        if self.tensorboard:
+            cost_summary = tf.summary.scalar('cost', cost)
+
+        optimiser = self._set_optimiser()
+        optimisation_op = optimiser.minimize(cost)
+
+        # Initialisation of variables and iterators
+        init = tf.global_variables_initializer()
+        iterator_init = iterator.make_initializer(dataset)
+
+        # Starting the session
+        self.session = tf.Session()
+
+        if self.tensorboard:
+            self.tensorboard_logger.initialise()
+            file_writer = tf.summary.FileWriter(logdir=self.tensorboard_subdir, graph=self.session.graph)
+
+        self.session.run(init)
+        self.session.run(iterator_init, feed_dict={xyz_tf: xyz, zs_tf: zs, y_tf: y, dy_tf: dy})
+
+        for i in range(self.iterations):
+
+            self.session.run(iterator_init, feed_dict={xyz_tf: xyz, zs_tf: zs, y_tf: y, dy_tf: dy})
+            avg_cost = 0
+
+            for j in range(n_training_batches):
+                if self.AdagradDA:
+                    opt, c = self.session.run([optimisation_op, cost])
+                else:
+                    opt, c = self.session.run([optimisation_op, cost])
+
+                avg_cost += c
+
+            # This seems to run the iterator.get_next() op, which gives problems with end of sequence
+            # Hence why I re-initialise the iterator
+            self.session.run(iterator_init, feed_dict={xyz_tf: xyz, zs_tf: zs, y_tf: y, dy_tf: dy})
+            if self.tensorboard:
+                if i % self.tensorboard_logger.store_frequency == 0:
+                    summary = self.session.run(tf.summary.merge_all())
+                    file_writer.add_summary(summary, i)
+
+            self.training_cost.append(avg_cost/n_training_batches)
 
     # TODO predict function: returns gradients as well as y
 

@@ -320,53 +320,6 @@ class _ONN(BaseEstimator, _NN):
             raise InputError("Expected boolean value for variable 'slatm_alchemy'. Got %s." % str(slatm_alchemy))
         self.slatm_alchemy = bool(slatm_alchemy)
 
-    def _set_acsf(self, radial_cutoff, angular_cutoff, radial_rs, angular_rs, theta_s, zeta, eta):
-        """
-        This function sets the parameters for the acsf as described in the Tensormol paper.
-
-        :param radial_cutoff: float
-        :param angular_cutoff: float
-        :param radial_rs: np array of floats of shape (n_rad_rs,)
-        :param angular_rs:  np array of floats of shape (n_ang_rs,)
-        :param theta_s: np array of floats of shape (n_theta_s,)
-        :param zeta: float
-        :param eta: float
-        :return: None
-        """
-
-        if not is_positive(radial_cutoff):
-            raise InputError("Expected positive float for variable 'radial_cutoff'. Got %s." % str(radial_cutoff))
-        self.radial_cutoff = float(radial_cutoff)
-
-        if not is_positive(angular_cutoff):
-            raise InputError("Expected positive float for variable 'angular_cutoff'. Got %s." % str(angular_cutoff))
-        self.angular_cutoff = float(angular_cutoff)
-
-        if not is_numeric_array(radial_rs):
-            raise InputError("Expecting an array like radial_rs. Got %s." % (radial_rs) )
-        if not len(radial_rs)>0:
-            raise InputError("No radial_rs values were given." )
-        self.radial_rs = list(radial_rs)
-
-        if not is_numeric_array(angular_rs):
-            raise InputError("Expecting an array like angular_rs. Got %s." % (angular_rs) )
-        if not len(angular_rs)>0:
-            raise InputError("No angular_rs values were given." )
-        self.angular_rs = list(angular_rs)
-
-        if not is_numeric_array(theta_s):
-            raise InputError("Expecting an array like theta_s. Got %s." % (theta_s) )
-        if not len(theta_s)>0:
-            raise InputError("No theta_s values were given. " )
-        self.theta_s = list(theta_s)
-
-        if is_numeric_array(eta):
-            raise InputError("Expecting a scalar value for eta. Got %s." % (eta))
-        self.eta = eta
-
-        if is_numeric_array(zeta):
-            raise InputError("Expecting a scalar value for zeta. Got %s." % (zeta))
-        self.zeta = zeta
 
 #TODO slatm exception tests
 # TODO remove compounds argument and only keep it in _ONN
@@ -790,21 +743,6 @@ class OAMNN(ARMP, _ONN):
         if self.representation == 'acsf':
             self._set_acsf(radial_cutoff, angular_cutoff, radial_rs, angular_rs, theta_s, zeta, eta)
 
-    def _set_representation(self, representation):
-        """
-        This function sets the parameter that says which descriptor is going to be used.
-
-        :param representation: Name of descriptor to use
-        :type representation: string
-        :return: None
-        """
-
-        if not is_string(representation):
-            raise InputError("Expected string for variable 'representation'. Got %s" % str(representation))
-        if representation.lower() not in ['atomic_coulomb_matrix', 'slatm', 'acsf']:
-            raise InputError("Unknown representation %s" % representation)
-        self.representation = representation.lower()
-
     def generate_descriptor(self, descriptor_batch_size=100):
         """
         This function makes the descriptors for all the compounds. If the descriptor is ACSF, one can do it in batches
@@ -1137,43 +1075,6 @@ class OAMNN_G(ARMP_G, _ONN):
         else:
             self.prop_grad = None
 
-    def _generate_descriptor(self, batch_xyz, batch_zs):
-        """
-        This function generates the descriptor for the data points specified by the indices.
-
-        :param indices: indices of data points in the data set
-        :type indices: array of ints
-        :return: descriptors for the data points specified
-        :rtype: tensor of shape (n_samples, n_atoms, n_features)
-        """
-
-        descriptor = None
-
-        if self.representation == 'acsf':
-            descriptor = self._generate_acsf(batch_xyz, batch_zs)
-        else:
-            raise InputError("This descriptor has not been implemented yet.")
-
-        return descriptor
-
-    def _generate_acsf(self, batch_xyz, batch_zs):
-        """
-        This function creates the acsf for data points specified by the indices.
-
-        :param indices: indices of the data points in the data set
-        :return: descriptor
-        :rtype: tensor of shape (n_samples, n_atoms, n_features)
-        """
-
-        descriptor = sf.generate_parkhill_acsf(xyzs=batch_xyz, Zs=batch_zs, elements=self.train_elements,
-                                               element_pairs=self.train_element_pairs,
-                                               radial_cutoff=self.radial_cutoff, angular_cutoff=self.angular_cutoff,
-                                               radial_rs=self.radial_rs, angular_rs=self.angular_rs,
-                                               theta_s=self.theta_s,
-                                               eta=self.eta, zeta=self.zeta)
-
-        return descriptor
-
     def _get_elements(self, compounds):
         """
         This function takes some QML compounds objects and returns the elements and the element pairs present in all the
@@ -1259,73 +1160,11 @@ class OAMNN_G(ARMP_G, _ONN):
         # Extracting the subset of data points
         sub_compounds = self.compounds[indices]
 
-        # Obtaining the total elements and element pairs ordered in descending order
-        self.train_elements, self.train_element_pairs = self._get_elements(sub_compounds)
-
         # Obtaining coordinates and nuclear charges from compounds
         xyz, zs = self._get_xyz_zs(sub_compounds)
 
-        # Useful quantities
-        n_samples = xyz.shape[0]
-        max_n_atoms = zs.shape[1]
-        batch_size = 20  # Need to find a clever way of doing this
-
-        # Turning the quantities into tensors
-        with tf.name_scope("X_Inputs"):
-            zs_tf = tf.placeholder(shape=[n_samples, max_n_atoms], dtype=tf.int32, name="zs")
-            xyz_tf = tf.placeholder(shape=[n_samples, max_n_atoms, 3], dtype=tf.float32, name="xyz")
-
-            dataset = tf.data.Dataset.from_tensor_slices((xyz_tf, zs_tf))
-            dataset = dataset.batch(batch_size)
-            iterator = tf.data.Iterator.from_structure(dataset.output_types, dataset.output_shapes)
-            batch_xyz, batch_zs = iterator.get_next()
-
-        with tf.name_scope("Y_inputs"):
-            y_tf = tf.placeholder(shape=[n_samples, 1], dtype=tf.float32, name="Energies")
-            dy_tf = tf.placeholder(shape=[n_samples, max_n_atoms, 3], dtype=tf.int32, name="Forces")
-
-        # Making the descriptor
-        descriptor = self._generate_descriptor(batch_xyz, batch_zs)
-
-        # Generating the weights and biases
-        element_weights, element_biases = self._make_weights_biases()
-
-        # Creating the model
-
-        # Calculating the cost
+        self._fit([xyz, zs], [self.properties, self.prop_grad])
 
 
-
-    # TODO make model function
-
-    def _make_weights_biases(self):
-        """
-        This function uses the self.elements data to initialise tensors of weights and biases for each element present
-        in the system.
-
-        :return: dictionaries of weights and biases for each element
-        :rtype: two dictionaries where the keys are ints and the value are tensors
-        """
-        element_weights = {}
-        element_biases = {}
-
-        with tf.name_scope("Weights"):
-            for i in range(self.train_elements.shape[0]):
-                weights, biases = self._generate_weights(n_out=1)
-                element_weights[self.train_elements[i]] = weights
-                element_biases[self.train_elements[i]] = biases
-
-                # Log weights for tensorboard
-                if self.tensorboard:
-                    self.tensorboard_logger.write_weight_histogram(weights)
-
-        return element_weights, element_biases
-
-
-
-
-
-
-    # TODO predict function
 
 
